@@ -1,0 +1,320 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HYDROWATT Monitor</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #101a19;
+  color: white;
+  font-family: Arial, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.container {
+  width: 100%;
+  max-width: 420px;
+  background: #1b2926;
+  border: 1px solid #34544a;
+  border-radius: 25px;
+  padding: 28px;
+  text-align: center;
+  box-shadow: 0 10px 40px #0006;
+}
+
+h1 {
+  color: #54e6a0;
+  letter-spacing: 3px;
+  margin-bottom: 5px;
+}
+
+.subtitle {
+  color: #a8bdb4;
+  font-size: 13px;
+  margin-bottom: 30px;
+}
+
+.battery {
+  font-size: 65px;
+  margin: 15px 0;
+}
+
+.percentage {
+  font-size: 55px;
+  font-weight: bold;
+  color: #54e6a0;
+}
+
+.label {
+  color: #a8bdb4;
+  font-size: 13px;
+  letter-spacing: 2px;
+}
+
+.bar {
+  height: 16px;
+  background: #35453f;
+  border-radius: 20px;
+  margin: 22px 0;
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  width: 0%;
+  background: #54e6a0;
+  transition: width 0.4s;
+}
+
+.status {
+  margin: 20px 0;
+  color: #ffc66b;
+  font-size: 14px;
+}
+
+button {
+  width: 100%;
+  padding: 15px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 12px;
+  background: #54e6a0;
+  color: #10221a;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.footer {
+  margin-top: 25px;
+  font-size: 11px;
+  color: #82968d;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>HYDROWATT</h1>
+  <div class="subtitle">SMART ENERGY MONITOR</div>
+
+  <div class="battery">🔋</div>
+
+  <div class="percentage" id="percentage">--%</div>
+
+  <div class="label">BATTERY LEVEL</div>
+
+  <div class="bar">
+    <div class="fill" id="fill"></div>
+  </div>
+
+  <div class="status" id="status">
+    ● Bluetooth Disconnected
+  </div>
+
+  <button id="connectBtn" onclick="connectBluetooth()">
+    CONNECT ESP32
+  </button>
+
+  <div class="footer">
+    HYDROWATT POWER MONITOR SYSTEM
+  </div>
+
+</div>
+
+<script>
+const SERVICE_UUID =
+"12345678-1234-1234-1234-123456789000";
+
+const CHARACTERISTIC_UUID =
+"12345678-1234-1234-1234-123456789001";
+
+let device = null;
+let characteristic = null;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+
+const percentage = document.getElementById("percentage");
+const fill = document.getElementById("fill");
+const statusText = document.getElementById("status");
+const connectBtn = document.getElementById("connectBtn");
+
+function setStatus(text, color) {
+  statusText.textContent = "● " + text;
+  statusText.style.color = color;
+}
+
+function updateBattery(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) return;
+
+  const level = Math.max(0, Math.min(100, Math.round(number)));
+
+  percentage.textContent = level + "%";
+  fill.style.width = level + "%";
+}
+
+function batteryChanged(event) {
+  const value = new TextDecoder().decode(
+    event.target.value
+  ).trim();
+
+  updateBattery(value);
+}
+
+async function connectToDevice(selectedDevice) {
+  clearTimeout(reconnectTimer);
+
+  device = selectedDevice;
+
+  const server = await device.gatt.connect();
+
+  const service = await server.getPrimaryService(
+    SERVICE_UUID
+  );
+
+  characteristic = await service.getCharacteristic(
+    CHARACTERISTIC_UUID
+  );
+
+  await characteristic.startNotifications();
+
+  characteristic.addEventListener(
+    "characteristicvaluechanged",
+    batteryChanged
+  );
+
+  device.removeEventListener(
+    "gattserverdisconnected",
+    disconnected
+  );
+
+  device.addEventListener(
+    "gattserverdisconnected",
+    disconnected
+  );
+
+  setStatus("Bluetooth Connected", "#54e6a0");
+  connectBtn.textContent = "CONNECTED";
+  reconnectAttempts = 0;
+
+  try {
+    const data = await characteristic.readValue();
+    const value = new TextDecoder().decode(data).trim();
+    updateBattery(value);
+  } catch (error) {
+    console.log("Waiting for battery notification...");
+  }
+}
+
+async function connectBluetooth() {
+  try {
+    if (!navigator.bluetooth) {
+      alert("Please use Google Chrome or Microsoft Edge on your computer.");
+      return;
+    }
+
+    setStatus("Searching for ESP32...", "#ffc66b");
+    connectBtn.disabled = true;
+
+    const selectedDevice =
+      await navigator.bluetooth.requestDevice({
+        filters: [{
+          name: "HYDROWATT",
+          services: [SERVICE_UUID]
+        }]
+      });
+
+    await connectToDevice(selectedDevice);
+
+  } catch (error) {
+    console.error(error);
+    setStatus("Connection Failed", "#ff7777");
+    connectBtn.textContent = "CONNECT ESP32";
+  } finally {
+    connectBtn.disabled = false;
+  }
+}
+
+function disconnected() {
+  characteristic = null;
+
+  setStatus("Disconnected. Reconnecting...", "#ffc66b");
+  connectBtn.textContent = "RECONNECTING";
+
+  reconnectAttempts = 0;
+  tryReconnect();
+}
+
+function tryReconnect() {
+  if (!device || reconnectAttempts >= 8) {
+    setStatus("Reconnect needed. Tap Connect.", "#ffc66b");
+    connectBtn.textContent = "CONNECT ESP32";
+    return;
+  }
+
+  reconnectTimer = setTimeout(async () => {
+    reconnectAttempts++;
+
+    try {
+      await connectToDevice(device);
+    } catch (error) {
+      tryReconnect();
+    }
+  }, Math.min(1000 * reconnectAttempts + 1000, 8000));
+}
+
+// Attempt reconnect to a previously permitted device
+async function autoConnect() {
+  if (!navigator.bluetooth ||
+      !navigator.bluetooth.getDevices) return;
+
+  try {
+    const devices = await navigator.bluetooth.getDevices();
+
+    const savedDevice = devices.find(
+      item => item.name === "HYDROWATT"
+    );
+
+    if (savedDevice) {
+      device = savedDevice;
+      setStatus("Reconnecting...", "#ffc66b");
+
+      try {
+        await connectToDevice(savedDevice);
+      } catch (error) {
+        setStatus("Tap Connect ESP32", "#ffc66b");
+        connectBtn.textContent = "CONNECT ESP32";
+      }
+    }
+  } catch (error) {
+    console.log("Automatic connection unavailable.");
+  }
+}
+
+window.addEventListener("load", autoConnect);
+
+</script>
+
+</body>
+</html>
